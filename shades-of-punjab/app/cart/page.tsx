@@ -114,6 +114,7 @@ export default function CartPage() {
 
       // Get full address object to save snapshot
       const addressSnapshot = addresses.find(a => a.id === selectedAddressId);
+      const userName = user.user_metadata?.full_name || "Royal Guest";
 
       const fileExt = paymentProof.name.split('.').pop();
       const fileName = `order_${Date.now()}_${user.id}.${fileExt}`;
@@ -131,7 +132,9 @@ export default function CartPage() {
         payment_screenshot_url: publicUrl,
         user_remarks: userRemarks,
         customer_phone: addressSnapshot?.phone || "", // Use phone from address
-        delivery_address: addressSnapshot // Save full address object
+        customer_name: userName,
+        delivery_address: addressSnapshot, // Save full address object
+        items: cart // Save list of items
       }]);
 
       if (orderError) throw orderError;
@@ -272,7 +275,7 @@ export default function CartPage() {
             <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#2a0a12] via-[#c5a059] to-[#2a0a12]" />
             
             <h2 className="text-xl font-heading font-bold text-[#fbf5e9] mb-6 flex items-center gap-2">
-              <CreditCard className="text-[#c5a059]" size={20}/> Payment
+              <CreditCard className="text-[#c5a059]" size={20}/> Payment Details
             </h2>
             
             <div className="space-y-3 mb-8">

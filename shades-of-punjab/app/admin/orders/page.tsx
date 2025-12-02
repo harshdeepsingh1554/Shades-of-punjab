@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { ExternalLink, CheckCircle, Trash2, ArrowLeft, Phone, Send, Box, Truck, Package, IndianRupee, Loader2, Camera, AlertCircle } from "lucide-react";
+import { ExternalLink, CheckCircle, Trash2, ArrowLeft, Phone, Send, Box, Truck, Package, IndianRupee, Loader2, Camera, AlertCircle, MapPin, ShoppingBag, User, Bell, History, Save, XCircle, MinusCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -15,6 +15,21 @@ type Order = {
   admin_remarks: string;
   created_at: string;
   customer_phone?: string;
+  customer_name?: string;
+  delivery_address?: {
+    house_no: string;
+    landmark: string;
+    city: string;
+    state: string;
+    pincode: string;
+  }; 
+  items?: {
+    id: number;
+    name: string;
+    price: number;
+    quantity: number;
+    image_url: string;
+  }[];
   type: 'standard';
 };
 
@@ -28,6 +43,8 @@ type CustomRequest = {
   status: string;
   created_at: string;
   admin_remarks?: string;
+  customer_name?: string;
+  customer_phone?: string;
   type: 'custom';
 };
 
@@ -35,15 +52,18 @@ export default function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [priceInputs, setPriceInputs] = useState<{[key: number]: string}>({});
+  
+  // Edit State
   const [editingId, setEditingId] = useState<number | null>(null);
   const [adminNote, setAdminNote] = useState("");
+  
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'action' | 'history'>('action');
   const router = useRouter();
 
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      // LIST OF ALLOWED ADMINS
       const ALLOWED_ADMINS = [
         "7903379968@shades.local", 
         "9988776655@shades.local", 
@@ -52,7 +72,7 @@ export default function AdminOrders() {
       ];
 
       if (!user || !user.email || !ALLOWED_ADMINS.includes(user.email)) {
-        alert("Restricted Area: Royal Court Members Only.");
+        alert("Access Denied: Admins Only.");
         router.push("/");
         return;
       }
@@ -64,30 +84,94 @@ export default function AdminOrders() {
   }, [router]);
 
   const fetchAllData = async () => {
-    // Fetch Standard Orders
-    const { data: ordersData } = await supabase
-      .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false });
-    
-    // Fetch Custom Requests
-    const { data: requestsData } = await supabase
-      .from('custom_requests')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data: ordersData } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    const { data: requestsData } = await supabase.from('custom_requests').select('*').order('created_at', { ascending: false });
     
     if (ordersData) setOrders(ordersData.map(o => ({...o, type: 'standard'})));
     if (requestsData) setCustomRequests(requestsData.map(r => ({...r, type: 'custom'})));
   };
 
-  // --- Handlers for Standard Orders ---
+  // --- FILTER LOGIC ---
+  const getFilteredData = () => {
+    if (activeTab === 'action') {
+      return {
+        orders: orders.filter(o => !['delivered', 'rejected'].includes(o.status)),
+        requests: customRequests.filter(r => 
+          !r.admin_price_quote || (r.payment_proof_url && r.status !== 'verified_processing' && r.status !== 'converted_to_order' && r.status !== 'rejected')
+        )
+      };
+    } else {
+      return {
+        orders: orders.filter(o => ['delivered', 'rejected'].includes(o.status)),
+        requests: customRequests.filter(r => 
+          (r.admin_price_quote && !r.payment_proof_url) || r.status === 'verified_processing' || r.status === 'converted_to_order' || r.status === 'rejected'
+        )
+      };
+    }
+  };
+
+  const { orders: visibleOrders, requests: visibleRequests } = getFilteredData();
+
+  // --- Handlers ---
+  const handleOpenActionPanel = (id: number, currentNote: string) => {
+    if (editingId === id) {
+      setEditingId(null);
+      setAdminNote("");
+    } else {
+      setEditingId(id);
+      setAdminNote(currentNote || "");
+    }
+  };
+
   const updateOrderStatus = async (id: number, newStatus: string) => {
     const updates: any = { status: newStatus };
-    if (adminNote && editingId === id) updates.admin_remarks = adminNote;
+    if (adminNote && adminNote.trim() !== "") updates.admin_remarks = adminNote;
     
     await supabase.from('orders').update(updates).eq('id', id);
-    alert(`Order #${id} marked as ${newStatus}`);
+    alert(`Order #${id} updated to ${newStatus}`);
     setEditingId(null); setAdminNote(""); fetchAllData();
+  };
+
+  const saveNoteOnly = async (id: number) => {
+    if (!adminNote.trim()) return alert("Note cannot be empty");
+    await supabase.from('orders').update({ admin_remarks: adminNote }).eq('id', id);
+    alert("Note Saved!");
+    setEditingId(null); setAdminNote(""); fetchAllData();
+  };
+
+  // NEW: Reject Qty Wise
+  const rejectItemQty = async (orderId: number, itemIndex: number) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order || !order.items) return;
+
+    const item = order.items[itemIndex];
+    const isRemoval = item.quantity === 1;
+    
+    if (!confirm(isRemoval ? "Remove this item from order?" : `Reject 1 unit of ${item.name}? New Qty will be ${item.quantity - 1}.`)) return;
+
+    // Create deep copy
+    const updatedItems = order.items.map(i => ({...i}));
+    
+    if (isRemoval) {
+        updatedItems.splice(itemIndex, 1);
+    } else {
+        updatedItems[itemIndex].quantity -= 1;
+    }
+    
+    // Recalculate total
+    const newTotal = updatedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    const { error } = await supabase
+      .from('orders')
+      .update({ 
+        items: updatedItems, 
+        total_amount: newTotal,
+        admin_remarks: `Item Qty Adjusted. New Total: ${newTotal}`
+      })
+      .eq('id', orderId);
+
+    if (error) alert("Error: " + error.message);
+    else fetchAllData();
   };
 
   const deleteOrderProof = async (orderId: number, url: string) => {
@@ -102,236 +186,308 @@ export default function AdminOrders() {
     }
   };
 
-  // --- Handlers for Custom Requests ---
-  const sendQuote = async (id: number) => {
-    const price = priceInputs[id];
-    if (!price) return alert("Enter price");
-    
-    const { error } = await supabase
-      .from('custom_requests')
-      .update({ 
-        admin_price_quote: parseFloat(price), 
-        status: 'quote_sent' 
-      })
-      .eq('id', id);
-
-    if (!error) {
-      alert("Quote sent!");
+  // NEW: Permanently Delete Order (For Rejected/Junk)
+  const deleteOrder = async (id: number) => {
+    if (!confirm("PERMANENTLY DELETE this order? This cannot be undone.")) return;
+    const { error } = await supabase.from('orders').delete().eq('id', id);
+    if (error) alert("Error: " + error.message);
+    else {
+      alert("Order deleted.");
       fetchAllData();
     }
   };
 
+  const sendQuote = async (id: number) => {
+    const price = priceInputs[id];
+    if (!price) return alert("Enter price");
+    await supabase.from('custom_requests').update({ admin_price_quote: parseFloat(price), status: 'quote_sent' }).eq('id', id);
+    alert("Quote sent!"); fetchAllData();
+  };
+
   const verifyCustomPayment = async (id: number) => {
     await supabase.from('custom_requests').update({ status: 'verified_processing' }).eq('id', id);
-    alert("Custom order verified!");
-    fetchAllData();
+    alert("Verified!"); fetchAllData();
+  };
+
+  const rejectCustomRequest = async (id: number) => {
+    if (!confirm("Mark this request as Rejected?")) return;
+    const { error } = await supabase
+      .from('custom_requests')
+      .update({ status: 'rejected' })
+      .eq('id', id);
+      
+    if (error) alert("Error: " + error.message);
+    else {
+      alert("Request Rejected.");
+      fetchAllData();
+    }
+  };
+
+  const deleteCustomRequest = async (id: number) => {
+    if (!confirm("PERMANENTLY DELETE this request?")) return;
+    const { error } = await supabase.from('custom_requests').delete().eq('id', id);
+    if (error) alert("Error deleting: " + error.message);
+    else {
+      alert("Request deleted.");
+      fetchAllData();
+    }
   };
 
   if (loading) return <div className="min-h-screen bg-[#0f0505] flex items-center justify-center text-[#c5a059]"><Loader2 className="animate-spin w-12 h-12" /></div>;
 
   return (
-    <div className="min-h-screen bg-[#0f0505] pb-20">
-      <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="min-h-screen bg-[#0f0505] pb-20 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
         
-        {/* HEADER */}
-        <div className="flex flex-col md:flex-row md:items-center gap-4 mb-10 border-b border-[#c5a059]/30 pb-6">
-           <Link href="/admin" className="text-[#c5a059] hover:text-white transition flex items-center gap-2">
-             <ArrowLeft size={24} /> <span className="md:hidden text-sm font-bold uppercase tracking-widest">Back</span>
-           </Link>
-           <div>
-             <h1 className="text-2xl md:text-3xl font-heading font-bold text-[#c5a059] tracking-wide">Royal Orders</h1>
-             <p className="text-xs text-white/50 mt-1">Manage standard orders and bespoke requests</p>
-           </div>
+        <div className="flex items-center gap-4 mb-8 border-b border-[#c5a059]/30 pb-4">
+           <Link href="/admin"><ArrowLeft className="text-[#c5a059] hover:scale-110 transition" /></Link>
+           <h1 className="text-2xl md:text-3xl font-heading font-bold text-[#c5a059] tracking-wide">Orders & Requests</h1>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
+        {/* TABS */}
+        <div className="flex gap-4 mb-10 sticky top-4 z-20 bg-[#0f0505]/90 p-2 rounded-xl border border-[#c5a059]/20 backdrop-blur-md">
+          <button 
+            onClick={() => setActiveTab('action')}
+            className={`flex-1 py-4 rounded-lg text-sm font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-all
+              ${activeTab === 'action' ? 'bg-[#c5a059] text-black shadow-lg shadow-[#c5a059]/20' : 'bg-[#1a1510] text-[#c5a059]/50 hover:text-[#c5a059]'}`}
+          >
+            <Bell size={18} /> Pending Action
+          </button>
+          <button 
+            onClick={() => setActiveTab('history')}
+            className={`flex-1 py-4 rounded-lg text-sm font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-all
+              ${activeTab === 'history' ? 'bg-[#c5a059] text-black shadow-lg shadow-[#c5a059]/20' : 'bg-[#1a1510] text-[#c5a059]/50 hover:text-[#c5a059]'}`}
+          >
+            <History size={18} /> History / Sent
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           
-          {/* === LEFT COLUMN: STANDARD ORDERS === */}
+          {/* === LEFT: STANDARD ORDERS === */}
           <div className="space-y-8">
             <div className="flex items-center gap-3 border-b border-[#c5a059]/20 pb-3">
               <Package className="text-[#c5a059]" />
-              <h2 className="text-xl font-heading text-white">Standard Orders</h2>
-              <span className="bg-[#c5a059] text-black text-xs font-bold px-2 py-0.5 rounded-full">{orders.length}</span>
+              <h2 className="text-xl font-heading text-white">Standard Orders ({visibleOrders.length})</h2>
             </div>
 
-            {orders.length === 0 && <p className="text-white/30 italic text-center py-10">No active orders.</p>}
-
-            {orders.map((order) => (
+            {visibleOrders.map((order) => (
               <div key={order.id} className="bg-[#1a1510] border border-[#c5a059]/30 rounded-xl overflow-hidden shadow-lg flex flex-col relative">
                 
-                {/* Top Status Bar */}
-                <div className={`w-full py-2 px-4 text-center text-xs font-bold uppercase tracking-widest
-                  ${order.status === 'delivered' ? 'bg-[#c5a059] text-black' : 'bg-[#2a1010] text-red-400 border-b border-red-900'}`}>
-                  {order.status === 'delivered' ? '✅ Completed / Delivered' : `⚠️ Status: ${order.status}`}
+                {/* Delete Rejected Order Button */}
+                {order.status === 'rejected' && (
+                   <button 
+                     onClick={() => deleteOrder(order.id)}
+                     className="absolute top-3 right-3 text-red-500 hover:text-red-400 z-10 p-1 bg-black/50 rounded-full"
+                     title="Delete Rejected Order"
+                   >
+                     <Trash2 size={16} />
+                   </button>
+                )}
+
+                {/* Header */}
+                <div className={`w-full py-2 px-4 flex justify-between items-center text-xs font-bold uppercase tracking-widest
+                  ${order.status === 'delivered' ? 'bg-green-900/50 text-green-400' : 
+                    order.status === 'rejected' ? 'bg-red-900/50 text-red-400' :
+                    'bg-[#c5a059]/20 text-[#c5a059]'}`}>
+                  <span>Order #{order.id}</span>
+                  <span>{order.status}</span>
                 </div>
                 
-                <div className="p-5 flex flex-col gap-4">
-                  {/* Order Header */}
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-white text-lg">Order #{order.id}</p>
-                      <p className="text-xs text-[#c5a059]/80 font-mono mt-1">{new Date(order.created_at).toLocaleDateString()}</p>
-                    </div>
-                    <p className="text-[#c5a059] font-bold text-2xl">₹{order.total_amount}</p>
+                <div className="p-5 flex flex-col gap-5">
+                  
+                  {/* 1. Customer Info & Address */}
+                  <div className="bg-black/40 rounded-lg p-4 border border-[#c5a059]/10 space-y-3">
+                     <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm text-white font-bold flex items-center gap-2">
+                             <User size={14} className="text-[#c5a059]"/> {order.customer_name || "Guest"}
+                          </p>
+                          <p className="text-xs text-white/60 flex items-center gap-2 mt-1">
+                             <Phone size={14} className="text-[#c5a059]"/> {order.customer_phone || "No Phone"}
+                          </p>
+                        </div>
+                        <p className="text-[#c5a059] font-bold text-lg">₹{order.total_amount}</p>
+                     </div>
+
+                     {order.delivery_address ? (
+                       <div className="mt-2 pt-2 border-t border-white/10">
+                         <p className="text-[10px] text-[#c5a059] uppercase tracking-widest mb-1 flex items-center gap-1"><MapPin size={10}/> Shipping Address</p>
+                         <p className="text-xs text-white/80 leading-relaxed">
+                           {order.delivery_address.house_no}, {order.delivery_address.landmark}<br/>
+                           {order.delivery_address.city}, {order.delivery_address.state} - {order.delivery_address.pincode}
+                         </p>
+                       </div>
+                     ) : <p className="text-xs text-red-400 italic">No address info saved.</p>}
                   </div>
 
-                  {/* Customer Info Box */}
-                  <div className="bg-black/30 rounded-lg p-3 space-y-2 border border-[#c5a059]/10">
-                     <div className="flex items-center gap-2 text-sm text-white/90">
-                        <Phone size={14} className="text-[#c5a059]" /> 
-                        {order.customer_phone || <span className="text-white/40 italic">No Phone</span>}
+                  {/* 2. Ordered Items (The Dress) */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-[#c5a059] uppercase tracking-widest flex items-center gap-1"><ShoppingBag size={12}/> Ordered Items</p>
+                    {order.items && order.items.length > 0 ? (
+                      <div className="grid gap-2">
+                        {order.items.map((item, idx) => (
+                          <div key={idx} className="flex gap-3 bg-black/20 p-2 rounded border border-[#c5a059]/10 relative group/item">
+                             <div className="w-12 h-12 bg-black rounded overflow-hidden border border-[#c5a059]/20 shrink-0 relative group">
+                               <img src={item.image_url} className="w-full h-full object-cover" alt={item.name} />
+                               <a href={item.image_url} target="_blank" className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                 <ExternalLink size={12} className="text-[#c5a059]"/>
+                               </a>
+                             </div>
+                             <div className="flex-1">
+                               <p className="text-xs text-white font-bold">{item.name}</p>
+                               <p className="text-[10px] text-white/60">Qty: {item.quantity} x ₹{item.price}</p>
+                             </div>
+                             
+                             {/* Reject 1 Unit / Remove Item Button */}
+                             <button 
+                               onClick={() => rejectItemQty(order.id, idx)}
+                               className="absolute top-1 right-1 text-red-500/50 hover:text-red-500 p-1 rounded hover:bg-white/10 transition"
+                               title={item.quantity > 1 ? "Reject 1 Unit" : "Remove Item"}
+                             >
+                               {item.quantity > 1 ? <MinusCircle size={16} /> : <XCircle size={16} />}
+                             </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-white/40 italic">Items not recorded for this order.</p>}
+                  </div>
+
+                  {/* 3. Payment Proof & Note */}
+                  <div className="flex items-center justify-between bg-[#c5a059]/5 p-2 rounded border border-[#c5a059]/10">
+                     <div className="text-xs text-white/70">
+                        <span className="text-[#c5a059]">Note:</span> "{order.user_remarks || "None"}"
                      </div>
-                     
-                     <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5">
-                        {order.payment_screenshot_url ? (
-                           <div className="flex items-center gap-3">
-                             <a href={order.payment_screenshot_url} target="_blank" className="bg-blue-900/30 text-blue-300 text-xs px-3 py-1.5 rounded border border-blue-500/30 flex items-center gap-1 hover:bg-blue-900/50">
-                               <ExternalLink size={12} /> View Proof
-                             </a>
-                             <button onClick={() => deleteOrderProof(order.id, order.payment_screenshot_url)} className="text-xs text-red-400 hover:text-red-300 border-b border-red-900/50">
-                               Delete Image
+                     {order.payment_screenshot_url ? (
+                        <a href={order.payment_screenshot_url} target="_blank" className="text-xs text-blue-400 underline flex items-center gap-1">
+                          <ExternalLink size={10} /> Check Payment
+                        </a>
+                     ) : <span className="text-xs text-red-500">No Payment</span>}
+                  </div>
+
+                  {/* 4. Actions / Notes */}
+                  <div className="pt-2 border-t border-[#c5a059]/10">
+                     {/* Toggle Action Panel */}
+                     <button 
+                       onClick={() => handleOpenActionPanel(order.id, order.admin_remarks)} 
+                       className="w-full text-center text-xs text-[#c5a059] border border-[#c5a059]/30 rounded py-2 hover:bg-[#c5a059]/10 transition mb-2"
+                     >
+                       {editingId === order.id ? "Close Actions" : "Update Status / Add Note"}
+                     </button>
+
+                     {/* Action Panel */}
+                     {editingId === order.id && (
+                        <div className="bg-black/40 p-3 rounded-lg animate-in fade-in border border-white/10">
+                           
+                           {/* Note Input */}
+                           <div className="flex gap-2 mb-3">
+                             <input 
+                               type="text" 
+                               placeholder="Admin Note..." 
+                               className="flex-1 bg-[#1a1510] border border-white/20 text-white text-sm p-2 rounded outline-none focus:border-[#c5a059]"
+                               value={adminNote} 
+                               onChange={(e) => setAdminNote(e.target.value)} 
+                             />
+                             <button onClick={() => saveNoteOnly(order.id)} className="bg-white/10 text-white px-3 rounded hover:bg-white/20" title="Save Note Only">
+                               <Save size={16} />
                              </button>
                            </div>
-                        ) : <span className="text-xs text-red-500 italic bg-red-900/10 px-2 py-1 rounded">No Proof Uploaded</span>}
-                     </div>
 
-                     {order.user_remarks && (
-                       <div className="pt-2 border-t border-white/5">
-                         <p className="text-[10px] text-[#c5a059] uppercase tracking-wider mb-1">Customer Note:</p>
-                         <p className="text-xs text-white/70 italic">"{order.user_remarks}"</p>
-                       </div>
+                           {/* Status Buttons */}
+                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              <button onClick={() => updateOrderStatus(order.id, 'verified')} className="bg-green-900/30 text-green-400 border border-green-500/30 py-2 rounded text-[10px] font-bold hover:bg-green-900/50">VERIFY</button>
+                              <button onClick={() => updateOrderStatus(order.id, 'packed')} className="bg-purple-900/30 text-purple-400 border border-purple-500/30 py-2 rounded text-[10px] font-bold hover:bg-purple-900/50">PACK</button>
+                              <button onClick={() => updateOrderStatus(order.id, 'shipped')} className="bg-blue-900/30 text-blue-400 border border-blue-500/30 py-2 rounded text-[10px] font-bold hover:bg-blue-900/50">SHIP</button>
+                              <button onClick={() => updateOrderStatus(order.id, 'rejected')} className="bg-red-900/30 text-red-400 border border-red-500/30 py-2 rounded text-[10px] font-bold hover:bg-red-900/50">REJECT</button>
+                           </div>
+                           
+                           {/* Delivered Button */}
+                           <button onClick={() => updateOrderStatus(order.id, 'delivered')} className="w-full mt-2 bg-[#c5a059] text-black border border-[#c5a059] py-2 rounded text-[10px] font-bold hover:bg-white transition">
+                              MARK DELIVERED
+                           </button>
+                        </div>
+                     )}
+                     
+                     {/* Display existing admin note if panel closed */}
+                     {order.admin_remarks && editingId !== order.id && (
+                       <p className="text-xs text-[#c5a059] italic mt-2 text-center">Admin Note: {order.admin_remarks}</p>
                      )}
                   </div>
 
-                  {/* Action Grid - Mobile Friendly */}
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button onClick={() => updateOrderStatus(order.id, 'verified')} className="bg-green-900/40 text-green-400 border border-green-600/30 py-3 rounded-lg text-xs font-bold hover:bg-green-900/60 transition">VERIFY</button>
-                    <button onClick={() => updateOrderStatus(order.id, 'packed')} className="bg-purple-900/40 text-purple-400 border border-purple-600/30 py-3 rounded-lg text-xs font-bold hover:bg-purple-900/60 transition">PACK</button>
-                    <button onClick={() => updateOrderStatus(order.id, 'shipped')} className="bg-blue-900/40 text-blue-400 border border-blue-600/30 py-3 rounded-lg text-xs font-bold hover:bg-blue-900/60 transition">SHIP</button>
-                    <button onClick={() => updateOrderStatus(order.id, 'delivered')} className="bg-[#c5a059] text-black border border-[#c5a059] py-3 rounded-lg text-xs font-bold hover:bg-white transition">DELIVER</button>
-                  </div>
-
-                  {/* Messaging Accordion */}
-                  <div className="mt-2">
-                    <button onClick={() => setEditingId(editingId === order.id ? null : order.id)} className="w-full text-center text-xs text-[#c5a059] border border-[#c5a059]/30 rounded py-2 hover:bg-[#c5a059]/10 transition">
-                      {editingId === order.id ? "Close Message Box" : "Send Message / Reject Order"}
-                    </button>
-                    
-                    {editingId === order.id && (
-                      <div className="mt-3 bg-black/40 p-3 rounded-lg animate-in fade-in slide-in-from-top-2 border border-white/10">
-                        <input 
-                          type="text" 
-                          placeholder="Type message for customer..." 
-                          className="w-full bg-[#1a1510] border border-white/20 text-white text-sm p-3 rounded mb-3 outline-none focus:border-[#c5a059]"
-                          value={adminNote} 
-                          onChange={(e) => setAdminNote(e.target.value)} 
-                        />
-                        <div className="flex gap-2">
-                           <button onClick={() => updateOrderStatus(order.id, order.status)} className="flex-1 bg-white text-black py-2 rounded text-xs font-bold flex items-center justify-center gap-2 hover:bg-gray-200">
-                             <Send size={14} /> Send Note
-                           </button>
-                           <button onClick={() => updateOrderStatus(order.id, 'rejected')} className="flex-1 bg-red-600 text-white py-2 rounded text-xs font-bold hover:bg-red-700">
-                             REJECT ORDER
-                           </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* === RIGHT COLUMN: CUSTOM REQUESTS === */}
+          {/* === RIGHT: CUSTOM REQUESTS === */}
           <div className="space-y-8">
             <div className="flex items-center gap-3 border-b border-[#c5a059]/20 pb-3">
               <Camera className="text-[#c5a059]" />
-              <h2 className="text-xl font-heading text-white">Custom Requests</h2>
-              <span className="bg-[#c5a059] text-black text-xs font-bold px-2 py-0.5 rounded-full">{customRequests.length}</span>
+              <h2 className="text-xl font-heading text-white">Custom Requests ({visibleRequests.length})</h2>
             </div>
 
-            {customRequests.length === 0 && <p className="text-white/30 italic text-center py-10">No bespoke requests.</p>}
-
-            {customRequests.map((req) => (
-              <div key={req.id} className="bg-[#1a1510] border border-[#c5a059]/30 rounded-xl overflow-hidden shadow-lg p-5 flex flex-col gap-4">
+            {visibleRequests.map((req) => (
+              <div key={req.id} className="bg-[#1a1510] border border-[#c5a059]/30 rounded-xl overflow-hidden shadow-lg p-5 flex flex-col gap-4 relative">
                 
-                {/* Header with Status */}
-                <div className="flex justify-between items-start border-b border-white/5 pb-3">
+                {/* Delete/Reject Buttons (Top Right) */}
+                <div className="absolute top-4 right-4 flex gap-2">
+                   <button 
+                    onClick={() => rejectCustomRequest(req.id)} 
+                    className="text-yellow-500/50 hover:text-yellow-500 transition p-1"
+                    title="Reject Request"
+                  >
+                    <XCircle size={16} />
+                  </button>
+                  <button 
+                    onClick={() => deleteCustomRequest(req.id)} 
+                    className="text-red-500/50 hover:text-red-500 transition p-1"
+                    title="Permanently Delete"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-start border-b border-white/5 pb-3 pr-16">
                   <p className="font-bold text-white text-sm">Request #{req.id}</p>
-                  <span className={`text-[10px] uppercase px-2 py-1 rounded font-bold border
-                    ${req.status === 'converted_to_order' 
-                      ? 'text-green-400 border-green-500/30 bg-green-900/10' 
-                      : 'text-[#c5a059] border-[#c5a059]/20 bg-[#c5a059]/5'
-                    }`}>
+                  <span className="text-[10px] uppercase px-2 py-1 rounded font-bold border text-[#c5a059] border-[#c5a059]/20 bg-[#c5a059]/5">
                     {req.status.replace('_', ' ')}
                   </span>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-5">
-                  {/* Image Preview */}
                   <div className="w-full sm:w-32 aspect-square bg-black rounded-lg border border-[#c5a059]/20 overflow-hidden relative group">
                     <img src={req.reference_image_url} className="w-full h-full object-cover" />
-                    <a href={req.reference_image_url} target="_blank" className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition duration-300">
-                      <ExternalLink size={24} />
-                      <span className="text-xs font-bold mt-1">OPEN</span>
+                    <a href={req.reference_image_url} target="_blank" className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-[#c5a059]">
+                      <ExternalLink size={20} />
                     </a>
                   </div>
-
-                  {/* Details & Actions */}
-                  <div className="flex-1 flex flex-col justify-between">
-                    <div>
-                      <p className="text-xs text-[#c5a059] uppercase tracking-widest mb-1">Customer Vision:</p>
-                      <p className="text-sm text-white/80 italic mb-4 bg-black/20 p-2 rounded border border-white/5">"{req.user_note || 'No notes'}"</p>
-                    </div>
-
-                    {/* Pricing Action */}
-                    <div className="mt-2">
-                      {!req.admin_price_quote ? (
-                        // STEP 1: ADMIN SENDS QUOTE
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center bg-black border border-[#c5a059]/50 rounded px-3 py-1">
-                            <IndianRupee size={14} className="text-[#c5a059]" />
-                            <input 
-                              type="number" 
-                              placeholder="Enter Quote Amount" 
-                              className="bg-transparent border-none outline-none text-white text-sm p-2 w-full placeholder:text-white/30"
-                              onChange={(e) => setPriceInputs({...priceInputs, [req.id]: e.target.value})}
-                            />
-                          </div>
-                          <button 
-                            onClick={() => sendQuote(req.id)} 
-                            className="bg-[#c5a059] text-black text-xs font-bold py-3 rounded hover:bg-white transition uppercase tracking-widest w-full"
-                          >
-                            Send Quote
-                          </button>
-                        </div>
-                      ) : (
-                        // STEP 2: VERIFY PAYMENT
-                        <div className="bg-[#c5a059]/5 border border-[#c5a059]/20 rounded p-3">
-                          <p className="text-sm font-bold text-[#c5a059] flex items-center gap-1 mb-3">
-                            Price Quoted: <span className="text-white">₹{req.admin_price_quote}</span>
-                          </p>
-                          
-                          {req.payment_proof_url && req.status !== 'verified_processing' && req.status !== 'converted_to_order' ? (
-                            <div className="space-y-2">
-                               <div className="flex justify-between items-center bg-green-900/20 p-2 rounded border border-green-500/20">
-                                 <span className="text-[10px] text-green-400 font-bold uppercase flex items-center gap-1"><AlertCircle size={10}/> Payment Received</span>
-                                 <a href={req.payment_proof_url} target="_blank" className="text-xs text-blue-300 underline font-bold">Check Proof</a>
-                               </div>
-                               <button onClick={() => verifyCustomPayment(req.id)} className="w-full bg-green-600 hover:bg-green-500 text-white text-xs py-3 rounded font-bold transition uppercase tracking-wide">
-                                 Verify Payment
-                               </button>
-                            </div>
-                          ) : req.status === 'verified_processing' ? (
-                            <p className="text-xs text-green-400 font-bold flex items-center gap-2 bg-green-900/10 p-2 rounded"><CheckCircle size={14}/> Paid & Verified</p>
-                          ) : req.status === 'converted_to_order' ? (
-                            <p className="text-xs text-blue-300 font-bold flex items-center gap-2 bg-blue-900/10 p-2 rounded"><Package size={14}/> Moved to Orders</p>
-                          ) : (
-                            <p className="text-[10px] text-white/40 italic flex items-center gap-2"><Loader2 size={10} className="animate-spin"/> Waiting for payment...</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                  <div className="flex-1">
+                     <div className="flex items-center gap-2 text-xs text-white/80 mb-1">
+                        <User size={12} className="text-[#c5a059]"/> <span className="font-bold">{req.customer_name || "Guest"}</span>
+                     </div>
+                     <div className="flex items-center gap-2 text-xs text-white/80 mb-1">
+                        <Phone size={12} className="text-[#c5a059]"/> <span>{req.customer_phone || "No Phone"}</span>
+                     </div>
+                     <p className="text-xs text-white/60 italic bg-black/20 p-2 rounded">"{req.user_note}"</p>
+                     
+                     <div className="mt-3">
+                       {!req.admin_price_quote ? (
+                         <div className="flex gap-2">
+                           <input type="number" placeholder="Quote ₹" className="w-24 bg-black/40 border border-[#c5a059]/30 text-white text-xs p-1 rounded" onChange={(e) => setPriceInputs({...priceInputs, [req.id]: e.target.value})} />
+                           <button onClick={() => sendQuote(req.id)} className="bg-[#c5a059] text-black text-xs font-bold px-3 rounded hover:bg-white transition">Send</button>
+                         </div>
+                       ) : (
+                         <div className="bg-[#c5a059]/10 p-2 rounded border border-[#c5a059]/20">
+                            <p className="text-xs font-bold text-[#c5a059]">Price: ₹{req.admin_price_quote}</p>
+                            {req.payment_proof_url && activeTab === 'action' && (
+                              <div className="mt-2 flex items-center justify-between">
+                                <a href={req.payment_proof_url} target="_blank" className="text-xs text-blue-400 underline flex gap-1 items-center"><ExternalLink size={10}/> Proof</a>
+                                <button onClick={() => verifyCustomPayment(req.id)} className="text-[10px] bg-green-600 text-white px-3 py-1 rounded font-bold hover:bg-green-500">Verify</button>
+                              </div>
+                            )}
+                         </div>
+                       )}
+                     </div>
                   </div>
                 </div>
               </div>
