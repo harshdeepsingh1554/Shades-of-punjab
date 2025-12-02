@@ -63,6 +63,7 @@ export default function ProfilePage() {
       .from('custom_requests')
       .select('*')
       .eq('user_id', userId)
+      .neq('status', 'converted_to_order') // Hide if already ordered
       .order('created_at', { ascending: false });
 
     if (ordersData) setOrders(ordersData.map(o => ({...o, type: 'standard'})));
@@ -77,16 +78,15 @@ export default function ProfilePage() {
     if (error) {
         alert("Error deleting: " + error.message);
     } else {
-        alert("Request removed.");
-        checkUser(); // Refresh data
+        setCustomRequests(prev => prev.filter(r => r.id !== id));
     }
   };
 
-  const handleAddToCart = (req: CustomRequest) => {
+  const handleAddToCart = async (req: CustomRequest) => {
       if (!req.admin_price_quote) return;
       
       const customItem = {
-          id: 900000 + req.id, // Offset ID to avoid collision with standard products
+          id: 900000 + req.id, 
           name: `Bespoke Design #${req.id}`,
           price: req.admin_price_quote,
           image_url: req.reference_image_url,
@@ -96,9 +96,12 @@ export default function ProfilePage() {
       
       addToCart(customItem);
       
-      // Remove from list immediately to show it has "moved"
+      // Mark as converted in DB so it doesn't show here anymore
+      await supabase.from('custom_requests').update({ status: 'converted_to_order' }).eq('id', req.id);
+      
       setCustomRequests(prev => prev.filter(r => r.id !== req.id));
-      alert("Added to Cart! Proceed to checkout to finalize.");
+      alert("Added to Cart! Proceed to checkout.");
+      router.push('/cart'); 
   };
 
   const handlePaymentUpload = async (e: React.ChangeEvent<HTMLInputElement>, requestId: number) => {
@@ -110,7 +113,6 @@ export default function ProfilePage() {
       const fileExt = file.name.split('.').pop();
       const fileName = `custom_pay_${Date.now()}.${fileExt}`;
 
-      // Upload to 'orders' bucket
       const { error: uploadError } = await supabase.storage.from('orders').upload(fileName, file);
       if (uploadError) throw uploadError;
 
@@ -146,37 +148,34 @@ export default function ProfilePage() {
   // Helper to get status Icon and Color
   const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'verified': case 'verified_processing': return { icon: <CheckCircle size={16} />, color: 'text-green-400 bg-green-900/30 border-green-500/50' };
-      case 'packed': return { icon: <Gift size={16} />, color: 'text-purple-400 bg-purple-900/30 border-purple-500/50' };
-      case 'shipped': return { icon: <Truck size={16} />, color: 'text-blue-400 bg-blue-900/30 border-blue-500/50' };
-      case 'delivered': return { icon: <Package size={16} />, color: 'text-royal-gold bg-royal-gold/20 border-royal-gold' };
-      case 'rejected': return { icon: <Clock size={16} />, color: 'text-red-400 bg-red-900/30 border-red-500/50' };
-      case 'payment_uploaded': return { icon: <Clock size={16} />, color: 'text-blue-400 bg-blue-900/30 border-blue-500/50' };
-      case 'quote_sent': return { icon: <MessageSquare size={16} />, color: 'text-yellow-400 bg-yellow-900/30 border-yellow-500/50' };
-      default: return { icon: <Clock size={16} />, color: 'text-yellow-400 bg-yellow-900/30 border-yellow-500/50' };
+      case 'verified': case 'verified_processing': return { icon: <CheckCircle size={14} />, color: 'text-green-400 bg-green-900/30 border-green-500/30' };
+      case 'packed': return { icon: <Gift size={14} />, color: 'text-purple-400 bg-purple-900/30 border-purple-500/30' };
+      case 'shipped': return { icon: <Truck size={14} />, color: 'text-blue-400 bg-blue-900/30 border-blue-500/30' };
+      case 'delivered': return { icon: <Package size={14} />, color: 'text-[#c5a059] bg-[#c5a059]/20 border-[#c5a059]/50' };
+      case 'rejected': return { icon: <Clock size={14} />, color: 'text-red-400 bg-red-900/30 border-red-500/30' };
+      case 'payment_uploaded': return { icon: <Clock size={14} />, color: 'text-blue-400 bg-blue-900/30 border-blue-500/30' };
+      case 'quote_sent': return { icon: <MessageSquare size={14} />, color: 'text-yellow-400 bg-yellow-900/30 border-yellow-500/30' };
+      default: return { icon: <Clock size={14} />, color: 'text-white/60 bg-white/5 border-white/10' };
     }
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-royal-maroon bg-blend-multiply flex items-center justify-center text-royal-gold">
+    <div className="min-h-screen bg-[#0f0505] flex items-center justify-center text-[#c5a059]">
       <Loader2 className="animate-spin w-10 h-10" />
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-royal-maroon bg-[url('/royal-pattern-dark.png')] bg-blend-multiply py-12 px-4 relative overflow-hidden">
-      {/* Decorative Glows */}
-      <div className="absolute top-[-20%] right-[-20%] w-[600px] h-[600px] bg-royal-gold rounded-full blur-[180px] opacity-10 pointer-events-none"></div>
-
-      <div className="max-w-5xl mx-auto relative z-10">
+    <div className="min-h-screen bg-[#0f0505] pb-20">
+      <div className="max-w-5xl mx-auto px-4 py-8">
         
         {/* Profile Header */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-12 bg-[#1a1510] p-6 rounded-xl border border-royal-gold/20 shadow-xl">
-          <div>
-            <p className="text-royal-gold/60 uppercase tracking-[0.2em] text-xs font-bold mb-2">Authenticated Member</p>
-            <h1 className="text-2xl md:text-3xl font-heading font-bold text-royal-cream">{userEmail}</h1>
+        <div className="flex flex-col md:flex-row justify-between items-center mb-10 bg-[#1a1510] p-6 rounded-xl border border-[#c5a059]/20 shadow-lg gap-4">
+          <div className="text-center md:text-left">
+            <p className="text-[#c5a059]/60 uppercase tracking-[0.2em] text-[10px] font-bold mb-1">Authenticated Member</p>
+            <h1 className="text-xl md:text-2xl font-heading font-bold text-[#fbf5e9]">{userEmail}</h1>
           </div>
-          <button onClick={handleLogout} className="mt-4 md:mt-0 flex items-center gap-2 text-red-400 border border-red-500/30 px-6 py-2 hover:bg-red-900/20 rounded-full text-xs uppercase tracking-widest">
+          <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 border border-red-500/30 px-6 py-2.5 hover:bg-red-900/20 rounded-lg text-xs uppercase tracking-widest font-bold transition">
             <LogOut size={14} /> Sign Out
           </button>
         </div>
@@ -184,60 +183,66 @@ export default function ProfilePage() {
         {/* --- SECTION 1: CUSTOM REQUESTS --- */}
         {customRequests.length > 0 && (
           <div className="mb-12">
-            <h2 className="text-xl font-heading text-royal-gold mb-6 flex items-center gap-3">
-              <Camera className="text-royal-gold/70" /> Bespoke Requests
-            </h2>
-            <div className="grid gap-6">
+            <div className="flex items-center gap-3 border-b border-[#c5a059]/20 pb-3 mb-6">
+              <Camera className="text-[#c5a059]" />
+              <h2 className="text-xl font-heading text-white">Bespoke Requests</h2>
+            </div>
+
+            <div className="space-y-6">
               {customRequests.map((req) => {
                 const statusStyle = getStatusStyle(req.status);
                 return (
-                  <div key={req.id} className="bg-[#1a1510] p-6 rounded-xl border border-royal-gold/30 flex flex-col md:flex-row gap-6 relative overflow-hidden">
+                  <div key={req.id} className="bg-[#1a1510] border border-[#c5a059]/30 rounded-xl overflow-hidden shadow-lg p-5 flex flex-col sm:flex-row gap-5">
                     {/* Image */}
-                    <div className="w-full md:w-32 aspect-square bg-black rounded-lg overflow-hidden border border-royal-gold/20">
+                    <div className="w-full sm:w-32 aspect-square bg-black rounded-lg border border-[#c5a059]/20 overflow-hidden shrink-0">
                       <img src={req.reference_image_url} className="w-full h-full object-cover opacity-80" alt="Request" />
                     </div>
 
                     {/* Info */}
-                    <div className="flex-1">
-                      <div className="flex justify-between mb-2">
-                        <h3 className="font-bold text-royal-cream text-lg">Custom Design #{req.id}</h3>
-                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest border ${statusStyle.color}`}>
-                          {statusStyle.icon} {req.status.replace('_', ' ')}
+                    <div className="flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className="font-bold text-[#fbf5e9] text-base">Custom Design #{req.id}</h3>
+                          <div className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border ${statusStyle.color}`}>
+                            {statusStyle.icon} {req.status.replace('_', ' ')}
+                          </div>
                         </div>
+                        <p className="text-[#fbf5e9]/60 text-sm mb-4 italic">"{req.user_note}"</p>
                       </div>
-                      <p className="text-royal-cream/60 text-sm mb-4">"{req.user_note}"</p>
 
                       {/* Action Area */}
-                      <div className="bg-black/30 p-4 rounded border border-royal-gold/10">
+                      <div className="bg-black/20 p-3 rounded border border-[#c5a059]/10">
                         {req.admin_price_quote ? (
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div>
-                              <p className="text-[10px] text-royal-gold uppercase tracking-widest">Royal Quote</p>
-                              <p className="text-2xl font-bold text-green-400 flex items-center">
-                                <IndianRupee size={20} />{req.admin_price_quote}
+                          <div className="flex flex-col gap-3">
+                            <div className="flex justify-between items-center">
+                              <p className="text-[10px] text-[#c5a059] uppercase tracking-widest">Royal Quote</p>
+                              <p className="text-xl font-bold text-white flex items-center">
+                                <IndianRupee size={16} className="text-[#c5a059]" />{req.admin_price_quote}
                               </p>
                             </div>
 
-                            {/* Action Buttons: Add to Cart or Delete */}
-                            <div className="flex items-center gap-3">
+                            {/* Action Buttons */}
+                            <div className="flex gap-3 mt-2">
                                <button 
                                  onClick={() => handleAddToCart(req)}
-                                 className="bg-amber-500 text-black hover:bg-amber-400 font-bold px-6 py-2 rounded shadow-lg hover:shadow-amber-500/20 transition-all flex items-center gap-2 uppercase text-xs tracking-wider border border-amber-600"
+                                 className="flex-1 bg-[#c5a059] text-black font-bold py-3 rounded hover:bg-white transition flex items-center justify-center gap-2 uppercase text-xs tracking-wider"
                                >
-                                 <ShoppingCart size={16} /> Add to Cart
+                                 <ShoppingCart size={14} /> Add to Cart
                                </button>
                                
                                <button 
                                  onClick={() => handleDeleteRequest(req.id)}
-                                 className="text-red-400 hover:text-red-300 border border-red-500/30 p-2 rounded hover:bg-red-900/20 transition"
-                                 title="Decline Quote & Delete"
+                                 className="w-10 flex items-center justify-center text-red-400 border border-red-500/30 rounded hover:bg-red-900/20 transition"
+                                 title="Decline"
                                >
-                                 <Trash2 size={18} />
+                                 <Trash2 size={16} />
                                </button>
                             </div>
                           </div>
                         ) : (
-                          <p className="text-yellow-500 text-sm italic">Waiting for price quote from the Royal Court...</p>
+                          <p className="text-yellow-600 text-xs italic flex items-center gap-2">
+                            <Clock size={12} /> Waiting for price quote...
+                          </p>
                         )}
                       </div>
                     </div>
@@ -249,44 +254,47 @@ export default function ProfilePage() {
         )}
 
         {/* --- SECTION 2: ORDER HISTORY --- */}
-        <h2 className="text-xl font-heading text-royal-gold mb-6 flex items-center gap-3">
-          <Package className="text-royal-gold/70" /> Standard Orders
-        </h2>
+        <div className="flex items-center gap-3 border-b border-[#c5a059]/20 pb-3 mb-6">
+          <Package className="text-[#c5a059]" />
+          <h2 className="text-xl font-heading text-white">Order History</h2>
+        </div>
 
         {orders.length === 0 ? (
-          <div className="text-center py-12 bg-[#1a1510] border border-royal-gold/20 rounded-xl shadow-lg">
-            <p className="text-royal-cream/50 font-body">You have not placed any orders yet.</p>
-            <button onClick={() => router.push('/shop')} className="mt-4 text-royal-gold font-bold hover:underline uppercase tracking-widest text-xs">Browse Collection</button>
+          <div className="text-center py-16 bg-[#1a1510] border border-[#c5a059]/20 rounded-xl shadow-lg">
+            <p className="text-[#fbf5e9]/40 font-body mb-4">No orders placed yet.</p>
+            <button onClick={() => router.push('/shop')} className="text-[#c5a059] font-bold hover:underline uppercase tracking-widest text-xs">Browse Collection</button>
           </div>
         ) : (
           <div className="space-y-6">
             {orders.map((order) => {
               const statusStyle = getStatusStyle(order.status);
               return (
-                <div key={order.id} className="bg-[#1a1510] p-6 rounded-xl shadow-lg border border-royal-gold/20 hover:border-royal-gold/50 transition-all duration-300">
-                  <div className="flex flex-col md:flex-row justify-between md:items-start gap-6">
-                    <div>
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="font-heading text-xl font-bold text-royal-cream">Order #{order.id}</span>
-                        <span className="text-[10px] text-royal-cream/40 font-mono border border-royal-gold/10 px-2 py-0.5 rounded">
-                          {new Date(order.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="text-royal-cream/70 text-sm">Total Tribute: <span className="font-bold text-royal-gold">₹{order.total_amount}</span></p>
-                      {order.admin_remarks && (
-                        <div className="mt-4 bg-royal-gold/10 border-l-2 border-royal-gold p-3 rounded-r-md">
-                          <p className="text-[10px] text-royal-gold uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
-                            <MessageSquare size={10} /> Royal Decree
-                          </p>
-                          <p className="text-royal-cream text-sm italic">"{order.admin_remarks}"</p>
+                <div key={order.id} className="bg-[#1a1510] border border-[#c5a059]/20 p-5 rounded-xl shadow-lg hover:border-[#c5a059]/40 transition-all duration-300">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="font-heading text-lg font-bold text-[#fbf5e9]">Order #{order.id}</span>
+                          <span className="text-[10px] text-[#fbf5e9]/40 font-mono bg-white/5 px-2 py-0.5 rounded">
+                            {new Date(order.created_at).toLocaleDateString()}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest border ${statusStyle.color}`}>
+                        <p className="text-[#fbf5e9]/70 text-sm">Total: <span className="font-bold text-[#c5a059]">₹{order.total_amount}</span></p>
+                      </div>
+                      
+                      <div className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border ${statusStyle.color}`}>
                         {statusStyle.icon} {order.status}
                       </div>
                     </div>
+
+                    {order.admin_remarks && (
+                      <div className="bg-[#c5a059]/10 border-l-2 border-[#c5a059] p-3 rounded-r-md">
+                        <p className="text-[10px] text-[#c5a059] uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                          <MessageSquare size={10} /> Royal Decree
+                        </p>
+                        <p className="text-[#fbf5e9] text-sm italic">"{order.admin_remarks}"</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
