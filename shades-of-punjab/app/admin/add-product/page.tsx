@@ -40,7 +40,7 @@ export default function AddProduct() {
       
       const ALLOWED_ADMINS = [
         "7903379968@shades.local", 
-        "9988776655@shades.local", 
+        "6205218556@shades.local", 
         "9123456789@shades.local", 
         "8899776655@shades.local"
       ];
