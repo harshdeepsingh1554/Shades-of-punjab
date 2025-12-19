@@ -43,7 +43,7 @@ export default function ShopPage() {
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#0f0505] text-[#c5a059]">
       <Loader2 className="animate-spin w-12 h-12 mb-4" />
-      <p className="font-heading tracking-[0.3em] uppercase text-sm">Opening Treasury...</p>
+      <p className="font-heading tracking-[0.3em] uppercase text-sm">Opening ...</p>
     </div>
   );
 
@@ -61,7 +61,7 @@ export default function ShopPage() {
           <div className="flex justify-center mb-4">
              <Crown size={48} className="text-[#c5a059] drop-shadow-lg" />
           </div>
-          <span className="text-[#c5a059]/80 text-xs tracking-[0.4em] font-bold uppercase block mb-2">The Royal Collection</span>
+          <span className="text-[#c5a059]/80 text-xs tracking-[0.4em] font-bold uppercase block mb-2">Collections</span>
           <h1 className="text-4xl md:text-6xl font-heading font-bold text-[#fbf5e9] tracking-wide drop-shadow-md">
             Shades of Punjab
           </h1>
